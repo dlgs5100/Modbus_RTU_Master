@@ -1,17 +1,43 @@
+/*
+* \brief
+* Modbus RTU Master API Test
+*
+* \copyright
+* Copyright (C) MOXA Inc. All rights reserved.
+* This software is distributed under the terms of the
+* MOXA License. See the file COPYING-MOXA for details.
+* \date 2021/06/24
+* First release
+* \author Jerry YH Cheng
+*/
+
+/*****************************************************************************
+* Include files
+****************************************************************************/
+
+#include "rtu_master.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <math.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
 #include <sys/ioctl.h> 
 #include <linux/serial.h>
 
-#include "rtu_master.h"
+/*****************************************************************************
+* Private types/enumerations/variables/define
+****************************************************************************/
 
 #define ERROR_RETURN -1
+#define R_W_SINGLE_REQUEST_SIZE 8
+#define W_RESPONSE_SIZE 8
+#define F01_F03_WITHOUT_INPUT_RESPONSE_SIZE 5
+
+/*****************************************************************************
+ * Private functions
+ ****************************************************************************/
 
 static int set_serial(){
 
@@ -27,11 +53,6 @@ static int set_serial(){
     {
         fcntl(serial_fd, F_SETFL, 0);
     }
-
-    struct serial_struct serial;
-    ioctl(serial_fd, TIOCGSERIAL, &serial); 
-    serial.flags |= ASYNC_LOW_LATENCY; // (0x2000)
-    ioctl(serial_fd, TIOCSSERIAL, &serial);
 
     /* Setting I/O Baud Rate */
     cfsetispeed(&options, B9600);
@@ -65,26 +86,90 @@ static int set_serial(){
 
     return serial_fd;
 }
+
+/*****************************************************************************
+* Public function declaration
+****************************************************************************/
+
 int main()
 {
-    int serial_fd;
-    uint8_t send_data[8] = { 0 };
-    uint8_t rcv_data[32] = { 0 };
+    int serial_fd, request_size, response_size;
+    int function_code = 6, slave_id = 1, reg_address = 0, reg_quantity = 1, output_val = 465, poll_interval, response_timeout;
+    uint8_t *request, *response;
 
     if((serial_fd = set_serial()) == ERROR_RETURN)
     {
-        printf("Error test\n");
+        goto fd_close;
     }
 
-    memset(send_data, 0, sizeof(send_data));
-	set_rtu_03_read_holding_registers(send_data, 1, 0, 1);
-    write(serial_fd, send_data, 8);	
-    read(serial_fd, rcv_data, sizeof(rcv_data));
-    for (int i = 0; i < sizeof(rcv_data); i++)
+    memset(request, 0, sizeof(request));
+    switch (function_code)
+    {
+    case 1:
+        request_size = R_W_SINGLE_REQUEST_SIZE;
+        response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE+(int)ceilf((float)reg_quantity/8.0);
+        request = malloc(sizeof(uint8_t) * request_size);
+
+        set_rtu_01_read_coils(request, slave_id, reg_address, reg_quantity);
+
+        break;
+    case 3:
+        request_size = R_W_SINGLE_REQUEST_SIZE;
+        response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE+reg_quantity*2;
+        request = malloc(sizeof(uint8_t) * request_size);
+
+        set_rtu_03_read_holding_registers(request, slave_id, reg_address, reg_quantity);
+        break;
+    case 5:
+        request_size = R_W_SINGLE_REQUEST_SIZE;
+        response_size = W_RESPONSE_SIZE;
+        request = malloc(sizeof(uint8_t) * request_size);
+
+        set_rtu_05_write_single_coil(request, slave_id, reg_address, output_val);
+        break;
+    case 6:
+        request_size = R_W_SINGLE_REQUEST_SIZE;
+        response_size = W_RESPONSE_SIZE;
+        request = malloc(sizeof(uint8_t) * request_size);
+
+        set_rtu_06_write_single_register(request, slave_id, reg_address, output_val);
+        break;
+    }
+    if(write(serial_fd, request, request_size) == ERROR_RETURN)
+    {
+        perror("write()");
+        goto fd_close;
+    }
+    printf("Request: \n");
+    for (int i = 0; i < request_size; i++)
 	{
-		printf("%02x ", rcv_data[i]);
+		printf("%02x ", request[i]);
 	}
     printf("\n");
+
+    response = calloc(sizeof(uint8_t), response_size);
+    if(read(serial_fd, response, response_size) == ERROR_RETURN)
+    {
+        perror("read()");
+        goto fd_close;
+    }
+    printf("Response: \n");
+    for (int i = 0; i < response_size; i++)
+	{
+		printf("%02x ", response[i]);
+	}
+    printf("\n");
+
+fd_close:
+    close(serial_fd);
+    if(request)
+    {
+        free(request);
+    }
+    if(response)
+    {
+        free(response);
+    }
 
     return 0;
 }

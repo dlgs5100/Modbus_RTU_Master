@@ -1,14 +1,17 @@
 /*
 * \brief
-* Modbus RTU Master API Implement Function 01, 03, 05, 06
+* Modbus RTU Master API Implement Function 01, 03, 05, 06 Header
 *
 * \copyright
 * Copyright (C) MOXA Inc. All rights reserved.
 * This software is distributed under the terms of the
 * MOXA License. See the file COPYING-MOXA for details.
+*
 * \date 2021/06/24
 * First release
-* \author Jerry YH Cheng
+*
+* \author 
+* Jerry YH Cheng
 */
 
 #ifndef __RTU_MASTER_H__
@@ -26,8 +29,7 @@
 * Private types/enumerations/variables/define
 ****************************************************************************/
 
-#define R_W_SINGLE_CRC_LEN 6
-
+/* Enum of read and write single register function frame field */
 typedef enum
 {
     R_W_SINGLE_FIELD_SLAVE_ID       = 0,
@@ -39,6 +41,8 @@ typedef enum
     R_W_SINGLE_FIELD_HI_CRC         = 6,
     R_W_SINGLE_FIELD_LO_CRC         = 7
 }r_w_single;
+
+#define R_W_SINGLE_CRC_LEN 6    /**< Length of read and write single register function calculate by crc in frame */
 
 /*****************************************************************************
 * Private function declaration

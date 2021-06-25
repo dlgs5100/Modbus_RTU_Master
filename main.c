@@ -20,20 +20,32 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <math.h>
+#include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
 #include <sys/ioctl.h> 
+#include <sys/select.h>
 #include <linux/serial.h>
 
 /*****************************************************************************
 * Private types/enumerations/variables/define
 ****************************************************************************/
 
-#define ERROR_RETURN -1
-#define R_W_SINGLE_REQUEST_SIZE 8
-#define W_RESPONSE_SIZE 8
-#define F01_F03_WITHOUT_INPUT_RESPONSE_SIZE 5
+typedef enum
+{
+    MODBUS_FUNCTION_CODE_01         = 1,
+    MODBUS_FUNCTION_CODE_03         = 3,
+    MODBUS_FUNCTION_CODE_05         = 5,
+    MODBUS_FUNCTION_CODE_06         = 6
+}function_code;
+
+#define ERROR_RETURN                            -1  /**< Return error */
+#define R_W_SINGLE_REQUEST_SIZE                  8  /**< Length of read and write single register function request */
+#define W_RESPONSE_SIZE                          8  /**< Length of write register function response */
+#define F01_F03_WITHOUT_INPUT_RESPONSE_SIZE      5  /**< Length of 01,03 function response */
+#define POLL_INTERVAL                         1000  /**< User define polling interval */
+#define RESPONSE_TIMEOUT                      2000  /**< User define response timeout */
 
 /*****************************************************************************
  * Private functions
@@ -92,75 +104,130 @@ static int set_serial(){
 ****************************************************************************/
 
 int main()
-{
+{   
     int serial_fd, request_size, response_size;
-    int function_code = 6, slave_id = 1, reg_address = 0, reg_quantity = 1, output_val = 465, poll_interval, response_timeout;
+    int function_code = 6, slave_id = 1, reg_address = 0, reg_quantity = 1, output_val = 465;
+    struct timeval timeout;
+    fd_set read_fds_master, read_fds;
     uint8_t *request, *response;
+    struct timeval sys_time;
+    long int begin_request_timer = 0;
 
     if((serial_fd = set_serial()) == ERROR_RETURN)
     {
-        goto fd_close;
+        goto close_free;
     }
 
-    memset(request, 0, sizeof(request));
-    switch (function_code)
+    FD_ZERO(&read_fds_master);
+    FD_ZERO(&read_fds);
+
+    FD_SET(serial_fd, &read_fds_master);
+
+    /* Initialize timeout timer */
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+
+    while(1)
     {
-    case 1:
-        request_size = R_W_SINGLE_REQUEST_SIZE;
-        response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE+(int)ceilf((float)reg_quantity/8.0);
-        request = malloc(sizeof(uint8_t) * request_size);
+        /* Set Modbus RTU frame */
+        switch (function_code)
+        {
+        case MODBUS_FUNCTION_CODE_01:
+            request_size = R_W_SINGLE_REQUEST_SIZE;
+            response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE+(int)ceilf((float)reg_quantity/8.0); /* Setting size by Read Quantity(bits to byte)*/
+            request = malloc(sizeof(uint8_t) * request_size);
 
-        set_rtu_01_read_coils(request, slave_id, reg_address, reg_quantity);
+            set_rtu_01_read_coils(request, slave_id, reg_address, reg_quantity);
+            break;
+        case MODBUS_FUNCTION_CODE_03:
+            request_size = R_W_SINGLE_REQUEST_SIZE;
+            response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE+reg_quantity*2; /* Setting size by Read Quantity(two bytes) */
+            request = malloc(sizeof(uint8_t) * request_size);
 
-        break;
-    case 3:
-        request_size = R_W_SINGLE_REQUEST_SIZE;
-        response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE+reg_quantity*2;
-        request = malloc(sizeof(uint8_t) * request_size);
+            set_rtu_03_read_holding_registers(request, slave_id, reg_address, reg_quantity);
+            break;
+        case MODBUS_FUNCTION_CODE_05:
+            request_size = R_W_SINGLE_REQUEST_SIZE;
+            response_size = W_RESPONSE_SIZE;
+            request = malloc(sizeof(uint8_t) * request_size);
 
-        set_rtu_03_read_holding_registers(request, slave_id, reg_address, reg_quantity);
-        break;
-    case 5:
-        request_size = R_W_SINGLE_REQUEST_SIZE;
-        response_size = W_RESPONSE_SIZE;
-        request = malloc(sizeof(uint8_t) * request_size);
+            set_rtu_05_write_single_coil(request, slave_id, reg_address, output_val);
+            break;
+        case MODBUS_FUNCTION_CODE_06:
+            request_size = R_W_SINGLE_REQUEST_SIZE;
+            response_size = W_RESPONSE_SIZE;
+            request = malloc(sizeof(uint8_t) * request_size);
 
-        set_rtu_05_write_single_coil(request, slave_id, reg_address, output_val);
-        break;
-    case 6:
-        request_size = R_W_SINGLE_REQUEST_SIZE;
-        response_size = W_RESPONSE_SIZE;
-        request = malloc(sizeof(uint8_t) * request_size);
+            set_rtu_06_write_single_register(request, slave_id, reg_address, output_val);
+            break;
+        default:
+            fprintf(stderr, "Error Function Code\n");
+            goto close_free;
+        }
 
-        set_rtu_06_write_single_register(request, slave_id, reg_address, output_val);
-        break;
+        read_fds = read_fds_master;
+        /* Select active fds into read_fds */
+        switch(select(serial_fd+1, &read_fds, NULL, NULL, &timeout))
+        {
+        case -1:
+            perror("select()");
+            goto close_free;
+        case 0: /* Timeout happened(Include first time setting timeout) */
+            gettimeofday(&sys_time, NULL);
+            if (!begin_request_timer || (sys_time.tv_sec*1000 + sys_time.tv_usec/1000) - begin_request_timer >= POLL_INTERVAL)  /* Handle first request and polling interval */
+            {
+                if (write(serial_fd, request, request_size) == ERROR_RETURN)
+                {
+                    perror("write()");
+                    goto close_free;
+                }
+
+                /* Update polling being timer */
+                gettimeofday(&sys_time, NULL);
+                begin_request_timer = sys_time.tv_sec*1000 + sys_time.tv_usec/1000;
+
+                /* Update timeout timer */
+                timeout.tv_sec = 0;
+                timeout.tv_usec = RESPONSE_TIMEOUT * 1000;
+
+                printf("Request: \n");
+                for (int i = 0; i < request_size; i++)
+                {
+                    printf("%02x ", request[i]);
+                }
+                printf("\n");
+
+                free(request);
+            }
+            break;
+        default:
+            if (FD_ISSET(serial_fd, &read_fds))
+            {
+                response = calloc(sizeof(uint8_t), response_size);
+                if(read(serial_fd, response, response_size) == ERROR_RETURN)
+                {
+                    perror("read()");
+                    goto close_free;
+                }
+
+                /* Clear timeout timer */
+                timeout.tv_sec = 0;
+                timeout.tv_usec = 0;
+
+                printf("Response: \n");
+                for (int i = 0; i < response_size; i++)
+                {
+                    printf("%02x ", response[i]);
+                }
+                printf("\n");
+
+                free(response);
+            }
+            break;
+        }       
     }
-    if(write(serial_fd, request, request_size) == ERROR_RETURN)
-    {
-        perror("write()");
-        goto fd_close;
-    }
-    printf("Request: \n");
-    for (int i = 0; i < request_size; i++)
-	{
-		printf("%02x ", request[i]);
-	}
-    printf("\n");
 
-    response = calloc(sizeof(uint8_t), response_size);
-    if(read(serial_fd, response, response_size) == ERROR_RETURN)
-    {
-        perror("read()");
-        goto fd_close;
-    }
-    printf("Response: \n");
-    for (int i = 0; i < response_size; i++)
-	{
-		printf("%02x ", response[i]);
-	}
-    printf("\n");
-
-fd_close:
+close_free:
     close(serial_fd);
     if(request)
     {

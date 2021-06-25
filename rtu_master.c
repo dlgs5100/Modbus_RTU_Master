@@ -1,14 +1,17 @@
 /*
-* \brief
-* Modbus RTU Master Implement Function 01, 03, 05, 06
+* \file
+* Modbus RTU Master Implement Function 01, 03, 05, 06 Code
 *
 * \copyright
 * Copyright (C) MOXA Inc. All rights reserved.
 * This software is distributed under the terms of the
 * MOXA License. See the file COPYING-MOXA for details.
+*
 * \date 2021/06/24
 * First release
-* \author Jerry YH Cheng
+*
+* \author 
+* Jerry YH Cheng
 */
 
 /*****************************************************************************
@@ -23,14 +26,14 @@
 
 static uint16_t crc_calc(uint8_t* data, int len)
 {
-    int j;
-    unsigned int reg_crc=0xFFFF;
+    int i;
+    uint32_t reg_crc=0xFFFF;
     while(len--)
     {
         reg_crc ^= *data++;
-        for(j=0;j<8;j++)
+        for(i=0;i<8;i++)
         {
-            if(reg_crc & 0x01) /* LSB(b0)=1 */
+            if(reg_crc & 0x01) /* LSB=1 */
                 reg_crc=(reg_crc>>1) ^ 0xA001;
             else
                 reg_crc=reg_crc >>1;

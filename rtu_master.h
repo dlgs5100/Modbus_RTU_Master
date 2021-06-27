@@ -10,7 +10,7 @@
 * \date 2021/06/24
 * First release
 *
-* \author 
+* \author
 * Jerry YH Cheng
 */
 
@@ -40,7 +40,7 @@ typedef enum
     R_W_SINGLE_FIELD_LO_REG_VAL     = 5,
     R_W_SINGLE_FIELD_HI_CRC         = 6,
     R_W_SINGLE_FIELD_LO_CRC         = 7
-}r_w_single;
+} r_w_single;
 
 #define R_W_SINGLE_CRC_LEN 6    /**< Length of read and write single register function calculate by crc in frame */
 
@@ -48,7 +48,7 @@ typedef enum
 * Private function declaration
 ****************************************************************************/
 
-static uint16_t crc_calc(uint8_t* data, int len);
+static uint16_t crc_calc(uint8_t *data, int len);
 
 /*****************************************************************************
 * Public function declaration

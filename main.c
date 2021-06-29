@@ -76,8 +76,8 @@ static int set_serial(){
     }
 
     /* Setting I/O Baud Rate */
-    cfsetispeed(&options, B921600);
-    cfsetospeed(&options, B921600);
+    cfsetispeed(&options, B19200);
+    cfsetospeed(&options, B19200);
     /* Setting control option */
     options.c_cflag |= CREAD; /* Open receive */
     options.c_cflag |= CLOCAL; /* Ignore control line(Avoid occupy port) */
@@ -155,15 +155,14 @@ int main()
             usleep(t3_5);
             if(response)
             {   
-                // printf("%d %d\n", response_size, total_receive_size);
-                // if(response_size == total_receive_size)   /* Handle incomplete response frame */
-                // {
-                //     DEBUG("Processing complete frame");
-                // }
-                // else
-                // {
-                //     DEBUG("Delete incomplete Frame");
-                // }
+                if(response_size == total_receive_size)   /* Handle incomplete response frame */
+                {
+                    DEBUG("Processing complete frame");
+                }
+                else
+                {
+                    DEBUG("Delete incomplete Frame");
+                }
                 
                 free(response);
                 response = NULL;

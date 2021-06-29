@@ -31,11 +31,11 @@ static uint16_t crc_calc(uint8_t *data, int len)
 
     while (len--)
     {
-        reg_crc ^= *data++;
+        reg_crc ^= *data++;     /* XOR each bytes */
 
-        for (i = 0; i < 8; i++)
+        for (i = 0; i < 8; i++)     /* Left shift each bits */
         {
-            if (reg_crc & 0x01) /* LSB=1 */
+            if (reg_crc & 0x01)     /* LSB=1 */
             {
                 reg_crc = (reg_crc >> 1) ^ 0xA001;
             }
@@ -87,7 +87,11 @@ void set_rtu_05_write_single_coil(uint8_t *rtu_frame, uint8_t slave_id, uint16_t
     rtu_frame[R_W_SINGLE_FIELD_FUNCTION_CODE] = 0x05;
     rtu_frame[R_W_SINGLE_FIELD_HI_REG_ADDR] = (reg_addr >> 8) & 0xff;
     rtu_frame[R_W_SINGLE_FIELD_LO_REG_ADDR] = reg_addr & 0xff;
-    rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = reg_val ? 0xff : 0x00;
+    // rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = reg_val ? 0xff : 0x00;
+    if (reg_val)
+        rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = 0xff;
+    else
+        rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = 0x00;
     rtu_frame[R_W_SINGLE_FIELD_LO_REG_VAL] = 0x00;
 
     uint16_t crc_tmp = crc_calc(rtu_frame, R_W_SINGLE_CRC_LEN);

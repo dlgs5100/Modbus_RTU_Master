@@ -55,6 +55,12 @@ static uint16_t crc_calc(uint8_t *data, int len)
 
 void set_rtu_01_read_coils(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_addr, uint16_t reg_num)
 {
+    if (reg_num > 2000)
+    {
+        fprintf(stderr, "Out of range read amount\n");
+        return;
+    }
+
     rtu_frame[R_W_SINGLE_FIELD_SLAVE_ID] = slave_id;
     rtu_frame[R_W_SINGLE_FIELD_FUNCTION_CODE] = 0x01;
     rtu_frame[R_W_SINGLE_FIELD_HI_REG_ADDR] = (reg_addr >> 8) & 0xff;
@@ -69,6 +75,12 @@ void set_rtu_01_read_coils(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_ad
 
 void set_rtu_03_read_holding_registers(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_addr, uint16_t reg_num)
 {
+    if (reg_num > 125)
+    {
+        fprintf(stderr, "Out of range read amount\n");
+        return;
+    }
+
     rtu_frame[R_W_SINGLE_FIELD_SLAVE_ID] = slave_id;
     rtu_frame[R_W_SINGLE_FIELD_FUNCTION_CODE] = 0x03;
     rtu_frame[R_W_SINGLE_FIELD_HI_REG_ADDR] = (reg_addr >> 8) & 0xff;
@@ -86,12 +98,7 @@ void set_rtu_05_write_single_coil(uint8_t *rtu_frame, uint8_t slave_id, uint16_t
     rtu_frame[R_W_SINGLE_FIELD_SLAVE_ID] = slave_id;
     rtu_frame[R_W_SINGLE_FIELD_FUNCTION_CODE] = 0x05;
     rtu_frame[R_W_SINGLE_FIELD_HI_REG_ADDR] = (reg_addr >> 8) & 0xff;
-    rtu_frame[R_W_SINGLE_FIELD_LO_REG_ADDR] = reg_addr & 0xff;
-    // rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = reg_val ? 0xff : 0x00;
-    if (reg_val)
-        rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = 0xff;
-    else
-        rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = 0x00;
+    rtu_frame[R_W_SINGLE_FIELD_HI_REG_VAL] = reg_val ? 0xff : 0x00;
     rtu_frame[R_W_SINGLE_FIELD_LO_REG_VAL] = 0x00;
 
     uint16_t crc_tmp = crc_calc(rtu_frame, R_W_SINGLE_CRC_LEN);

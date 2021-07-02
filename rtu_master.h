@@ -25,6 +25,8 @@
 #include <stdint.h>
 #include <string.h>
 
+extern struct error_codes;
+
 /*****************************************************************************
 * Private types/enumerations/variables/define
 ****************************************************************************/

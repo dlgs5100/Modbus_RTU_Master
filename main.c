@@ -14,7 +14,7 @@
 #define __DEBUG__
 
 #ifdef __DEBUG__
-#define DEBUG(format,...) printf(format"\n", ##__VA_ARGS__)
+#define DEBUG(format,...) printf(format, ##__VA_ARGS__)
 #else
 #define DEBUG(format,...)
 #endif
@@ -48,10 +48,22 @@ typedef enum
     MODBUS_FUNCTION_CODE_06         = 6
 } function_code;
 
+typedef enum
+{
+    OK_STATUS                      = 0,
+    SLAVE_ID_OUT_OF_RANGE_STATUS,
+    REG_ADDR_OUT_OF_RANGE_STATUS,
+    REG_NUM_OUT_OF_RANGE_STATUS,
+    REG_VAL_OUT_OF_RANGE_STATUS,
+    STATUS_AMOUNT_CAP
+} return_status;
+
 #define ERROR_RETURN                            -1  /**< Return error */
+#define OK_STATUS                                0  /**< Return error */
 #define R_W_SINGLE_REQUEST_SIZE                  8  /**< Length of read and write single register function request */
 #define W_RESPONSE_SIZE                          8  /**< Length of write register function response */
 #define F01_F03_WITHOUT_INPUT_RESPONSE_SIZE      5  /**< Length of 01,03 function response */
+#define F01_F03_RESPONSE_BYTE_COUNT_FIELD        2  /**< Field byte count of 01,03 function response */
 #define POLL_INTERVAL                         1000  /**< User define polling interval */
 #define RESPONSE_TIMEOUT                       500  /**< User define response timeout */
 #define BAUD                                 19200  /**< User define baud rate */
@@ -60,7 +72,8 @@ typedef enum
  * Private functions
  ****************************************************************************/
 
-static int set_serial(){
+static int set_serial()
+{
 
     int serial_fd;
     struct termios options;
@@ -106,14 +119,74 @@ static int set_serial(){
     return serial_fd;
 }
 
+static int collision_detect(uint8_t *request, int request_size, uint8_t *response, int response_size)
+{
+    int index_field;
+    uint16_t request_quantity;
+
+    if (request[R_W_SINGLE_FIELD_FUNCTION_CODE] == MODBUS_FUNCTION_CODE_01)
+    {   
+        request_quantity = ((uint16_t)request[R_W_SINGLE_FIELD_HI_REG_VAL] << 8) | request[R_W_SINGLE_FIELD_LO_REG_VAL];
+        
+        if (request[R_W_SINGLE_FIELD_SLAVE_ID] != response[R_W_SINGLE_FIELD_SLAVE_ID] || 
+        request[R_W_SINGLE_FIELD_FUNCTION_CODE] != response[R_W_SINGLE_FIELD_FUNCTION_CODE] ||
+        (int)ceilf((float)request_quantity / 8.0) != response[F01_F03_RESPONSE_BYTE_COUNT_FIELD])
+        {
+            return 1;
+        }
+    }
+    else if (request[R_W_SINGLE_FIELD_FUNCTION_CODE] == MODBUS_FUNCTION_CODE_03)
+    {
+        request_quantity = ((uint16_t)request[R_W_SINGLE_FIELD_HI_REG_VAL] << 8) | request[R_W_SINGLE_FIELD_LO_REG_VAL];
+
+        if (request[R_W_SINGLE_FIELD_SLAVE_ID] != response[R_W_SINGLE_FIELD_SLAVE_ID] || 
+        request[R_W_SINGLE_FIELD_FUNCTION_CODE] != response[R_W_SINGLE_FIELD_FUNCTION_CODE] ||
+        request_quantity * 2 != response[F01_F03_RESPONSE_BYTE_COUNT_FIELD])
+        {
+            return 1;
+        }
+    }
+    else if (request[R_W_SINGLE_FIELD_FUNCTION_CODE] == MODBUS_FUNCTION_CODE_05 || request[R_W_SINGLE_FIELD_FUNCTION_CODE] == MODBUS_FUNCTION_CODE_06)
+    {
+        for (index_field=0; index_field<request_size; index_field++)
+        {
+            if (request[index_field] != response[index_field])
+            {
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static const char* err2msg(int code)
+{
+    static char default_error[] = "Unknown Error";
+    static char* error_message[] = {
+    "",
+    "Input slave id between 0 and 255",
+    "Input start address between 0 and 65535",
+    "Out of range address",
+    "Out of range number"
+    };
+
+    if (code >= STATUS_AMOUNT_CAP)
+    {
+        return default_error;
+    }
+    return error_message[code];
+}
+
 /*****************************************************************************
 * Public function declaration
 ****************************************************************************/
 
 int main()
 {
-    int serial_fd, request_size, response_size, total_receive_size, t1_5, t3_5;
-    int function_code = 6, slave_id = 1, reg_address = 0, reg_quantity = 1, output_val = 456;       // Test variable
+    int serial_fd, request_size, response_size, total_receive_size, t1_5, t3_5, status_code;
+    int function_code = 5, slave_id = 2, reg_address = 0, reg_quantity = 1, output_val = 1;       // Test variable
+    int remaining_timeout_sec, remaining_timeout_usec;
     struct timeval timeout, sys_time;
     fd_set read_fds_master, read_fds;
     uint8_t *request = NULL, *response = NULL;
@@ -127,10 +200,6 @@ int main()
     t1_5 = BAUD > 19200 ? 750 : (15000000 / BAUD);
     t3_5 = BAUD > 19200 ? 1750 : (35000000 / BAUD);
 
-    // FD_ZERO(&read_fds_master);
-    // FD_ZERO(&read_fds);
-
-    // FD_SET(serial_fd, &read_fds_master);
 
     /* Initialize timeout timer to send request*/
     timeout.tv_sec = 0;
@@ -138,10 +207,9 @@ int main()
 
     while (1)
     {
-        // read_fds = read_fds_master;
-        FD_ZERO(&read_fds); //每次循环都要清空集合，否则不能检测描述符变化
-        FD_SET(serial_fd,&read_fds); //添加描述符
-
+        FD_ZERO(&read_fds);
+        FD_SET(serial_fd,&read_fds);
+        
         /* Select active fds into read_fds */
         switch (select(serial_fd + 1, &read_fds, NULL, NULL, &timeout))
         {
@@ -153,18 +221,36 @@ int main()
             
             /* Inter-frame delay */
             usleep(t3_5);
+
             if(response)
             {   
+                if(response[R_W_SINGLE_FIELD_SLAVE_ID] != slave_id) /* Handle wrong slave id response */
+                {
+                    /* Timeout timer recovery */
+                    timeout.tv_sec = remaining_timeout_sec;
+                    timeout.tv_usec = remaining_timeout_usec;
+                    break;
+                }
+
                 if(response_size == total_receive_size)   /* Handle incomplete response frame */
                 {
-                    DEBUG("Processing complete frame");
+                    if (collision_detect(request, request_size, response, response_size))
+                    {
+                        DEBUG("Collision detect\n");
+                    }
+                    else
+                    {
+                        DEBUG("Processing complete frame\n");
+                    }
                 }
                 else
                 {
-                    DEBUG("Delete incomplete Frame");
+                    DEBUG("Delete incomplete Frame\n");
                 }
                 
+                free(request);
                 free(response);
+                request = NULL;
                 response = NULL;
             }
 
@@ -176,63 +262,145 @@ int main()
                 switch (function_code)
                 {
                 case MODBUS_FUNCTION_CODE_01:
+
+                    if (slave_id < 0 || slave_id > 255)
+                    {
+                        status_code = SLAVE_ID_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (reg_address < 0 || reg_address > 65535)
+                    {
+                        status_code = REG_ADDR_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (reg_quantity < 0 || reg_quantity > 2000)
+                    {
+                        status_code = REG_NUM_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+
                     request_size = R_W_SINGLE_REQUEST_SIZE;
                     response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE + (int)ceilf((float)reg_quantity / 8.0); /* Setting size by Read Quantity(bits to byte)*/
                     request = calloc(sizeof(uint8_t), request_size);
 
                     if (!request)
                     {
-                        perror("malloc()");
+                        perror("calloc()");
                         goto close_free;
                     }
 
                     set_rtu_01_read_coils(request, slave_id, reg_address, reg_quantity);
+                    status_code = OK_STATUS;
+
                     break;
 
                 case MODBUS_FUNCTION_CODE_03:
+
+                    if (slave_id < 0 || slave_id > 255)
+                    {
+                        status_code = SLAVE_ID_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (reg_address < 0 || reg_address > 65535)
+                    {
+                        status_code = REG_ADDR_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (reg_quantity < 0 || reg_quantity > 125)
+                    {
+                        status_code = REG_NUM_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+
                     request_size = R_W_SINGLE_REQUEST_SIZE;
                     response_size = F01_F03_WITHOUT_INPUT_RESPONSE_SIZE + reg_quantity * 2; /* Setting size by Read Quantity(two bytes) */
                     request = calloc(sizeof(uint8_t), request_size);
 
                     if (!request)
                     {
-                        perror("malloc()");
+                        perror("calloc()");
                         goto close_free;
                     }
 
                     set_rtu_03_read_holding_registers(request, slave_id, reg_address, reg_quantity);
+                    status_code = OK_STATUS;
+
                     break;
 
                 case MODBUS_FUNCTION_CODE_05:
+
+                    if (slave_id < 0 || slave_id > 255)
+                    {
+                        status_code = SLAVE_ID_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (reg_address < 0 || reg_address > 65535)
+                    {
+                        status_code = REG_ADDR_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (output_val != 0 && output_val != 1)
+                    {
+                        status_code = REG_VAL_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+
                     request_size = R_W_SINGLE_REQUEST_SIZE;
                     response_size = W_RESPONSE_SIZE;
                     request = calloc(sizeof(uint8_t), request_size);
 
                     if (!request)
                     {
-                        perror("malloc()");
+                        perror("calloc()");
                         goto close_free;
                     }
 
                     set_rtu_05_write_single_coil(request, slave_id, reg_address, output_val);
+                    status_code = OK_STATUS;
+
                     break;
 
                 case MODBUS_FUNCTION_CODE_06:
+
+                    if (slave_id < 0 || slave_id > 255)
+                    {
+                        status_code = SLAVE_ID_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (reg_address < 0 || reg_address > 65535)
+                    {
+                        status_code = REG_ADDR_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+                    else if (output_val < 0 || output_val > 65535)
+                    {
+                        status_code = REG_VAL_OUT_OF_RANGE_STATUS;
+                        break;
+                    }
+
                     request_size = R_W_SINGLE_REQUEST_SIZE;
                     response_size = W_RESPONSE_SIZE;
                     request = calloc(sizeof(uint8_t), request_size);
 
                     if (!request)
                     {
-                        perror("malloc()");
+                        perror("calloc()");
                         goto close_free;
                     }
 
                     set_rtu_06_write_single_register(request, slave_id, reg_address, output_val);
+                    status_code = OK_STATUS;
+
                     break;
 
                 default:
                     fprintf(stderr, "Error Function Code\n");
+                    goto close_free;
+                }
+                
+                if (status_code != OK_STATUS)
+                {
+                    DEBUG("%s\n", err2msg(status_code));
                     goto close_free;
                 }
 
@@ -241,15 +409,13 @@ int main()
                     perror("write()");
                     goto close_free;
                 }
-                DEBUG("request:");
+                DEBUG("=================\n");
+                DEBUG("request:\n");
                 for(int i=0; i<request_size; i++)
                 {
-                    DEBUG("%02x", request[i]);
+                    DEBUG("%02x ", request[i]);
                 }
-
-
-                tcflush(serial_fd, TCOFLUSH);
-                ioctl(serial_fd, TCFLSH, 1);
+                DEBUG("\n");
 
                 /* Update polling being timer */
                 gettimeofday(&sys_time, NULL);
@@ -264,8 +430,6 @@ int main()
 
                 /* Initialize receive_size */
                 total_receive_size = 0;
-
-                free(request);
             }
 
             break;
@@ -288,14 +452,13 @@ int main()
                     perror("read()");
                     goto close_free;
                 }
-                tcflush(serial_fd, TCIFLUSH);
-                ioctl(serial_fd, TCFLSH, 0);
                 
-                DEBUG("receive_size: %d", receive_size);
+                DEBUG("receive_size: %d\n", receive_size);
                 for(int i=0; i<receive_size; i++)
                 {
-                    DEBUG("%02x", response[i]);
+                    DEBUG("%02x ", response[i]);
                 }
+                DEBUG("\n");
 
                 total_receive_size += receive_size;
 
@@ -306,6 +469,10 @@ int main()
                 }
                 else    /* Clear timeout timer to send new request*/
                 {
+                    /* Save remaining timeout timer for recovery from receive wrong slave id response */
+                    remaining_timeout_sec = timeout.tv_sec;
+                    remaining_timeout_usec = timeout.tv_usec;
+
                     timeout.tv_sec = 0;
                     timeout.tv_usec = 0;
                 }
@@ -314,48 +481,6 @@ int main()
             break;
         }
     }
-    // int receive_size;
-    // request_size = R_W_SINGLE_REQUEST_SIZE;
-    // response_size = W_RESPONSE_SIZE;
-    // request = calloc(sizeof(uint8_t), request_size);
-    // response = calloc(sizeof(uint8_t), response_size);
-
-    // if (!request)
-    // {
-    //     perror("calloc()");
-    //     goto close_free;
-    // }
-    // if (!response)
-    // {
-    //     perror("calloc()");
-    //     goto close_free;
-    // }
-
-    // set_rtu_06_write_single_register(request, slave_id, reg_address, output_val);
-    // // for(int i=0; i<request_size; i++)
-    // // {
-    // //     request[i] = 0xa3;
-    // // }
-    // for(int i=0; i<request_size; i++)
-    // {
-    //     DEBUG("%02x", request[i]);
-    // }
-    // if (write(serial_fd, request, request_size) == ERROR_RETURN)
-    // {
-    //     perror("write()");
-    //     goto close_free;
-    // }
-    // if ((receive_size = read(serial_fd, response, response_size)) == ERROR_RETURN)
-    // {
-    //     perror("read()");
-    //     goto close_free;
-    // }
-    
-    // DEBUG("receive_size: %d", receive_size);
-    // for(int i=0; i<receive_size; i++)
-    // {
-    //     DEBUG("%02x", response[i]);
-    // }
 
 close_free:
     close(serial_fd);

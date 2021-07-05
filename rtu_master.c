@@ -21,10 +21,10 @@
 #include "rtu_master.h"
 
 /*****************************************************************************
- * Private functions
+ * Public functions
  ****************************************************************************/
 
-static uint16_t crc_calc(uint8_t *data, int len)
+uint16_t crc_calc(uint8_t *data, int len)
 {
     int i;
     uint32_t reg_crc = 0xFFFF;
@@ -48,10 +48,6 @@ static uint16_t crc_calc(uint8_t *data, int len)
 
     return reg_crc;
 }
-
-/*****************************************************************************
- * Public functions
- ****************************************************************************/
 
 void set_rtu_01_read_coils(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_addr, uint16_t reg_num)
 {

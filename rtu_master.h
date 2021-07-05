@@ -47,15 +47,10 @@ typedef enum
 #define R_W_SINGLE_CRC_LEN 6    /**< Length of read and write single register function calculate by crc in frame */
 
 /*****************************************************************************
-* Private function declaration
-****************************************************************************/
-
-static uint16_t crc_calc(uint8_t *data, int len);
-
-/*****************************************************************************
 * Public function declaration
 ****************************************************************************/
 
+uint16_t crc_calc(uint8_t *data, int len);
 void set_rtu_01_read_coils(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_addr, uint16_t reg_num);
 void set_rtu_03_read_holding_registers(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_addr, uint16_t reg_num);
 void set_rtu_05_write_single_coil(uint8_t *rtu_frame, uint8_t slave_id, uint16_t reg_addr, uint16_t reg_val);

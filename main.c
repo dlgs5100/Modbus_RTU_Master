@@ -64,6 +64,9 @@ typedef enum
 #define W_RESPONSE_SIZE                          8  /**< Length of write register function response */
 #define F01_F03_WITHOUT_INPUT_RESPONSE_SIZE      5  /**< Length of 01,03 function response */
 #define F01_F03_RESPONSE_BYTE_COUNT_FIELD        2  /**< Field byte count of 01,03 function response */
+#define crc_len                                  2  /**< CRC length */
+#define crc_high_offset                          2  /**< CRC high offset in frame */
+#define crc_low_offset                           1  /**< CRC low offset in frame */
 #define POLL_INTERVAL                         1000  /**< User define polling interval */
 #define RESPONSE_TIMEOUT                       500  /**< User define response timeout */
 #define BAUD                                 19200  /**< User define baud rate */
@@ -123,7 +126,17 @@ static int collision_detect(uint8_t *request, int request_size, uint8_t *respons
 {
     int index_field;
     uint16_t request_quantity;
+    uint16_t crc_check;
 
+    crc_check = crc_calc(response, response_size - crc_len);
+
+    /* First check by CRC */
+    if ( (crc_check & 0xff) != response[response_size - crc_high_offset] || ((crc_check >> 8) & 0xff) != response[response_size - crc_low_offset])
+    {
+        return 1;
+    }
+
+    /* Second check by Slave ID, Function Code and Byte Count in frame */
     if (request[R_W_SINGLE_FIELD_FUNCTION_CODE] == MODBUS_FUNCTION_CODE_01)
     {   
         request_quantity = ((uint16_t)request[R_W_SINGLE_FIELD_HI_REG_VAL] << 8) | request[R_W_SINGLE_FIELD_LO_REG_VAL];
@@ -185,7 +198,7 @@ static const char* err2msg(int code)
 int main()
 {
     int serial_fd, request_size, response_size, total_receive_size, t1_5, t3_5, status_code;
-    int function_code = 5, slave_id = 2, reg_address = 0, reg_quantity = 1, output_val = 1;       // Test variable
+    int function_code = 6, slave_id = 2, reg_address = 0, reg_quantity = 1, output_val = 123;       // Test variable
     int remaining_timeout_sec, remaining_timeout_usec;
     struct timeval timeout, sys_time;
     fd_set read_fds_master, read_fds;
@@ -197,9 +210,9 @@ int main()
         goto close_free;
     }
 
+    /* Setting t1.5 and t3.5 timer */
     t1_5 = BAUD > 19200 ? 750 : (15000000 / BAUD);
     t3_5 = BAUD > 19200 ? 1750 : (35000000 / BAUD);
-
 
     /* Initialize timeout timer to send request*/
     timeout.tv_sec = 0;
@@ -219,7 +232,7 @@ int main()
 
         case 0: /* Timeout happened(Include first time setting timeout) */
             
-            /* Inter-frame delay */
+            /* Inter-frame delay for receive response */
             usleep(t3_5);
 
             if(response)
@@ -262,7 +275,8 @@ int main()
                 switch (function_code)
                 {
                 case MODBUS_FUNCTION_CODE_01:
-
+                    
+                    /* API Error Handling */
                     if (slave_id < 0 || slave_id > 255)
                     {
                         status_code = SLAVE_ID_OUT_OF_RANGE_STATUS;
@@ -398,7 +412,7 @@ int main()
                     goto close_free;
                 }
                 
-                if (status_code != OK_STATUS)
+                if (status_code != OK_STATUS)   /* Handling API Error Message */
                 {
                     DEBUG("%s\n", err2msg(status_code));
                     goto close_free;
@@ -425,7 +439,7 @@ int main()
                 timeout.tv_sec = RESPONSE_TIMEOUT / 1000;
                 timeout.tv_usec = (RESPONSE_TIMEOUT % 1000) * 1000;
 
-                /* Inter-Frame delay */
+                /* Inter-Frame delay for send request*/
                 usleep(t3_5);
 
                 /* Initialize receive_size */
